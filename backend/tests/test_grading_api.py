@@ -2,8 +2,9 @@ import time
 import uuid
 
 import pytest
-from conftest import RUBRIC_TEXT, token
+from conftest import RUBRIC_TEXT, make_pdf, token
 
+from app.api.grading import RUBRIC_PDF_BYTES
 from app.integrations.canvas import CanvasError, Submission
 
 BUSY = {"READY_FOR_GRADING", "BEING_GRADED", "PUBLISHING"}
@@ -76,6 +77,29 @@ def test_a_batch_grades_every_supported_submission(api, caplog):
 def test_batch_creation_refuses_bad_input(api, change, status_code, code):
     body = {"course_id": "1001", "assignment_id": "2001", "rubric_text": RUBRIC_TEXT} | change
     r = api.post("/api/grading/batches", json=body)
+    assert (r.status_code, r.json()["error"]["code"]) == (status_code, code)
+
+
+def test_rubric_preview_shows_the_parsed_criteria(api):
+    body = api.post("/api/grading/rubric/preview", json={"rubric_text": RUBRIC_TEXT}).json()
+    assert body["max_score"] == 21
+    assert [(c["title"], c["max_points"], c["keywords"]) for c in body["criteria"]] == [
+        ("Correctness", 10, []), ("Style", 5, []), ("Concepts", 6, ["loop", "recursion", "base case"])]
+    r = api.post("/api/grading/rubric/preview", json={"rubric_text": "no points here"})
+    assert (r.status_code, r.json()["error"]["code"]) == (422, "RUBRIC_INVALID")
+
+
+def test_a_pdf_rubric_comes_back_as_editable_text(api):
+    r = api.post("/api/grading/rubric/pdf", content=make_pdf(["Correctness: 10", "Style: 11"]))
+    assert api.post("/api/grading/rubric/preview", json=r.json()).json()["max_score"] == 21
+
+
+@pytest.mark.parametrize("data, status_code, code", [
+    (b"not a pdf", 422, "RUBRIC_INVALID"),
+    (b"%PDF" + b"0" * RUBRIC_PDF_BYTES, 413, "RUBRIC_TOO_LARGE"),
+], ids=["not-a-pdf", "too-large"])
+def test_bad_rubric_pdfs_are_refused(api, data, status_code, code):
+    r = api.post("/api/grading/rubric/pdf", content=data)
     assert (r.status_code, r.json()["error"]["code"]) == (status_code, code)
 
 
