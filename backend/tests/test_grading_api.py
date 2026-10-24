@@ -2,7 +2,7 @@ import time
 import uuid
 
 import pytest
-from conftest import RUBRIC_TEXT
+from conftest import RUBRIC_TEXT, token
 
 from app.integrations.canvas import CanvasError, Submission
 
@@ -186,3 +186,15 @@ def test_online_text_gets_the_file_size_limit(api, monkeypatch):
     monkeypatch.setattr("app.integrations.fakes.SUBMISSIONS", [Submission("3001", "Ada", "1", body="x" * 5_000_001)])
     batch = start_batch(api)
     assert [(r["status"], r["error"]) for r in batch["results"]] == [("AI_ERROR_MANUAL_REVIEW", "file too large")]
+
+
+def test_another_grader_cannot_see_or_change_a_batch(api):
+    batch = start_batch(api)
+    ada = result_id(batch, "Ada Lovelace")
+    other = {"Authorization": f"Bearer {token('auth0|other-grader')}"}
+    assert api.get(f"/api/grading/batches/{batch['id']}", headers=other).status_code == 404
+    assert api.get(f"/api/grading/results/{ada}", headers=other).status_code == 404
+    assert api.patch(f"/api/grading/results/{ada}/review", json={"action": "accept"}, headers=other).status_code == 404
+    r = api.post(f"/api/grading/batches/{batch['id']}/approve-and-publish", json={"result_ids": [ada]}, headers=other)
+    assert r.status_code == 404
+    assert status(api, ada) == "AWAITING_REVIEW"
