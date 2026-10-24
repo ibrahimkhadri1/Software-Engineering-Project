@@ -26,6 +26,7 @@ class GradingBatch(Base):
     __tablename__ = "grading_batches"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    auth0_sub: Mapped[str]
     course_id: Mapped[str]
     assignment_id: Mapped[str]
     assignment_name: Mapped[str]
