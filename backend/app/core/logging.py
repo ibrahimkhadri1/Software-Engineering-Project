@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 correlation_id: ContextVar[str] = ContextVar("correlation_id", default="-")
 
 # Allowlist: any other `extra=` field is dropped so student content can't reach the logs.
-SAFE_FIELDS = ("method", "path", "status", "latency_ms", "safe_error_code")
+SAFE_FIELDS = ("method", "path", "status", "latency_ms", "safe_error_code", "result_id", "count")
 
 
 class JsonFormatter(logging.Formatter):

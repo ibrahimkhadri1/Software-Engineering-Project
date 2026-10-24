@@ -1,6 +1,24 @@
-import pytest
+import asyncio
+import os
+import subprocess
+import sys
+from datetime import UTC, datetime, timedelta
 
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import make_url, text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from app.core.config import get_settings
+from app.db.models import GradingBatch, GradingResult
 from app.domain.rubric import rubric_parser
+from app.main import create_app
+
+# The apps and the alembic subprocess read this, so tests never touch the dev database.
+TEST_DB = make_url(get_settings().database_url).set(database="autograder_test")
+os.environ["DATABASE_URL"] = TEST_DB.render_as_string(hide_password=False)
+get_settings.cache_clear()
+TABLES = "grading_results, grading_batches, audit_events"
 
 RUBRIC_TEXT = """
 Correctness: 10 points - Program produces the right output
@@ -36,3 +54,51 @@ def make_pdf(lines: list[str]) -> bytes:
     out += "".join(f"{offset:010d} 00000 n \n" for offset in offsets)
     out += f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
     return out.encode("latin-1")
+
+
+async def _create_test_database() -> None:
+    engine = create_async_engine(TEST_DB.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    async with engine.connect() as conn:
+        if not await conn.scalar(text("SELECT 1 FROM pg_database WHERE datname = 'autograder_test'")):
+            await conn.execute(text("CREATE DATABASE autograder_test"))
+    await engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def database():
+    asyncio.run(_create_test_database())
+    subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], check=True, capture_output=True)
+
+
+async def _truncate() -> None:
+    engine = create_async_engine(TEST_DB)
+    async with engine.begin() as conn:
+        await conn.execute(text(f"TRUNCATE {TABLES}"))
+    await engine.dispose()
+
+
+@pytest.fixture
+async def sessions(database):
+    await _truncate()
+    engine = create_async_engine(TEST_DB)
+    yield async_sessionmaker(engine, expire_on_commit=False)
+    await engine.dispose()
+
+
+@pytest.fixture
+def api(database):
+    asyncio.run(_truncate())
+    with TestClient(create_app()) as client:
+        yield client
+
+
+async def add_result(sessions, expires_in=timedelta(hours=48), **fields):
+    async with sessions() as session:
+        batch = GradingBatch(course_id="1001", assignment_id="2001", assignment_name="Lab 3", rubric_text=RUBRIC_TEXT,
+                             expires_at=datetime.now(UTC) + expires_in)
+        result = GradingResult(**{"course_id": "1001", "assignment_id": "2001", "student_id": "3001",
+                                  "student_name": "Ada Lovelace", "attempt": "1", "file_type": "online_text"} | fields)
+        batch.results.append(result)
+        session.add(batch)
+        await session.commit()
+        return result.id

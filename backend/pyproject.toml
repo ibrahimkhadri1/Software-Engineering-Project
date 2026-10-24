@@ -24,3 +24,6 @@ dev = [
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "--cov=app --cov-report=term-missing --cov-fail-under=90"
+
+[tool.coverage.run]
+concurrency = ["greenlet", "thread"]

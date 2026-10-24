@@ -34,10 +34,10 @@ class PublishAttempt:
         return self.published or self.dedupe_key in published
 
     def begin(self, status: Status, published: Container[DedupeKey]) -> None:
+        if self.check_duplicate_submission(published):  # first, so a published result reports the duplicate
+            raise DuplicatePublishError("this submission was already published")
         if status != Status.APPROVED:
             raise PublishError("only approved results can be published")
-        if self.check_duplicate_submission(published):
-            raise DuplicatePublishError("this submission was already published")
         if self.previous_attempts >= MAX_ATTEMPTS:
             raise PublishError("attempt limit reached")
 
