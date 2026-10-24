@@ -16,9 +16,10 @@ from app.core.config import get_settings
 from app.core.errors import AppError
 from app.db.models import PUBLISH_CLAIMED, AuditEvent, GradingBatch, GradingResult
 from app.db.session import Session
+from app.domain.pdf import PdfError, pdf_text
 from app.domain.publish import DuplicatePublishError, PublishAttempt, PublishError
 from app.domain.review import PredictionAcceptStatus, ReviewError
-from app.domain.rubric import RubricError, rubric_parser
+from app.domain.rubric import RubricError, RubricStruct, rubric_parser
 from app.domain.status import Status, transition
 from app.domain.submission import SubmissionError, SubmissionStatus, extract_text
 
@@ -33,12 +34,16 @@ COUNT_GROUPS = {
     "failed": {Status.AI_ERROR_MANUAL_REVIEW, Status.PUBLISH_ERROR_MANUAL_REVIEW},
 }
 REVIEWABLE = {Status.AWAITING_REVIEW, Status.REJECTED, Status.AI_ERROR_MANUAL_REVIEW}
+RUBRIC_PDF_BYTES = 5_000_000
 
 
-class BatchIn(BaseModel):
+class RubricIn(BaseModel):
+    rubric_text: str = Field(max_length=50_000)
+
+
+class BatchIn(RubricIn):
     course_id: str
     assignment_id: str
-    rubric_text: str = Field(max_length=50_000)
 
 
 class ReviewIn(BaseModel):
@@ -56,6 +61,35 @@ def _not_found() -> AppError:
     return AppError("NOT_FOUND", "Not found.", 404)
 
 
+def _parse_rubric(text: str) -> RubricStruct:
+    try:
+        return rubric_parser(text.replace("\x00", ""))
+    except RubricError as e:
+        raise AppError("RUBRIC_INVALID", f"The rubric could not be parsed: {e}.", 422) from e
+
+
+def _criteria(rubric: RubricStruct) -> list[dict]:
+    return [{"criterion_id": c.criterion_id, "title": c.title, "description": c.description,
+             "max_points": c.max_points, "keywords": c.accepted_keywords} for c in rubric.criteria]
+
+
+@router.post("/rubric/preview")
+async def preview_rubric(body: RubricIn):
+    rubric = _parse_rubric(body.rubric_text)
+    return {"criteria": _criteria(rubric), "max_score": rubric.max_score}
+
+
+@router.post("/rubric/pdf")
+async def rubric_from_pdf(request: Request):
+    data = await request.body()
+    if len(data) > RUBRIC_PDF_BYTES:
+        raise AppError("RUBRIC_TOO_LARGE", "The rubric PDF must be 5 MB or smaller.", 413)
+    try:
+        return {"rubric_text": pdf_text(data)}
+    except PdfError as e:
+        raise AppError("RUBRIC_INVALID", f"The rubric PDF could not be read: {e}.", 422) from e
+
+
 @router.post("/batches", status_code=202)
 async def create_batch(body: BatchIn, request: Request, session: Session, user: User):
     canvas = request.app.state.canvas
@@ -64,10 +98,7 @@ async def create_batch(body: BatchIn, request: Request, session: Session, user: 
         raise _not_found()
     if not assignment.supported:
         raise AppError("ASSIGNMENT_UNSUPPORTED", "This assignment's submission type cannot be graded here.", 422)
-    try:
-        rubric = rubric_parser(body.rubric_text.replace("\x00", ""))
-    except RubricError as e:
-        raise AppError("RUBRIC_INVALID", f"The rubric could not be parsed: {e}.", 422) from e
+    rubric = _parse_rubric(body.rubric_text)
     if rubric.max_score != assignment.points_possible:
         raise AppError("RUBRIC_POINTS_MISMATCH", f"The rubric totals {rubric.max_score} points but the assignment "
                        f"is worth {assignment.points_possible}.", 422)
@@ -136,8 +167,7 @@ async def get_result(result_id: uuid.UUID, session: Session, user: User):
     return {
         "id": r.id, "batch_id": r.batch_id, "student_name": r.student_name, "attempt": r.attempt,
         "file_type": r.file_type, "status": r.status, "error": r.error, "submission_text": r.submission_text,
-        "criteria": [{"criterion_id": c.criterion_id, "title": c.title, "description": c.description,
-                      "max_points": c.max_points} for c in rubric.criteria],
+        "criteria": _criteria(rubric),
         "max_score": rubric.max_score, "ai_output": r.ai_output,
         "suggested_score": r.suggested_score, "suggested_feedback": r.suggested_feedback,
         "final_score": r.final_score, "final_feedback": r.final_feedback,
