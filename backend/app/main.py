@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
-from app.core.errors import register_error_handlers
+from app.core.errors import error_response, register_error_handlers
 from app.core.logging import correlation_id, setup_logging
 
 log = logging.getLogger("app.request")
@@ -20,13 +20,6 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="Canvas Autograder API")
     register_error_handlers(app)
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[settings.frontend_origin],
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=["X-Correlation-ID"],
-    )
 
     @app.middleware("http")
     async def correlation_and_timing(request: Request, call_next):
@@ -37,14 +30,25 @@ def create_app() -> FastAPI:
         start = time.perf_counter()
         try:
             response = await call_next(request)
-            response.headers["X-Correlation-ID"] = cid
-            log.info("request", extra={
-                "method": request.method, "path": request.url.path, "status": response.status_code,
-                "latency_ms": round((time.perf_counter() - start) * 1000),
-            })
-            return response
-        finally:
-            correlation_id.reset(token)
+        except Exception as exc:
+            log.error("unhandled error", exc_info=exc, extra={"safe_error_code": "INTERNAL_ERROR"})
+            response = error_response(request, 500, "INTERNAL_ERROR", "Something went wrong. Nothing was published.")
+        response.headers["X-Correlation-ID"] = cid
+        log.info("request", extra={
+            "method": request.method, "path": request.url.path, "status": response.status_code,
+            "latency_ms": round((time.perf_counter() - start) * 1000),
+        })
+        correlation_id.reset(token)
+        return response
+
+    # Added last so it is outermost and 500 responses get CORS headers too.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[settings.frontend_origin],
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["X-Correlation-ID"],
+    )
 
     @app.get("/healthz")
     async def healthz():

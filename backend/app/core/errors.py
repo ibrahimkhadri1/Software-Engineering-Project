@@ -44,15 +44,7 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
     return error_response(request, 422, "VALIDATION_ERROR", f"Invalid request: {fields}")
 
 
-async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
-    # The middleware has already reset the context var by now.
-    correlation_id.set(getattr(request.state, "correlation_id", "-"))
-    log.error("unhandled error", exc_info=exc, extra={"safe_error_code": "INTERNAL_ERROR"})
-    return error_response(request, 500, "INTERNAL_ERROR", "Something went wrong. Nothing was published.")
-
-
 def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AppError, app_error_handler)
     app.add_exception_handler(HTTPException, http_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(Exception, unhandled_error_handler)

@@ -37,8 +37,8 @@ Check: `http://localhost:8000/healthz` returns `{"status": "ok"}` and the page a
 ## Tests
 
 ```sh
-cd backend && uv run pytest              # unit tests with coverage
-cd frontend && npm run lint && npm run build
+(cd backend && uv run pytest)              # unit tests with coverage
+(cd frontend && npm run lint && npm run build)
 ```
 
 CI runs both on every pull request.

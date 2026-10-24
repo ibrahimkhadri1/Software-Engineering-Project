@@ -69,12 +69,13 @@ def test_validation_error_names_fields_not_values(client):
 
 
 def test_unhandled_error_is_generic_and_correlated(client):
-    r = client.get("/test/crash", headers={"X-Correlation-ID": "crash-trace-1"})
+    r = client.get("/test/crash", headers={"X-Correlation-ID": "crash-trace-1", "Origin": "http://localhost:5173"})
     assert r.status_code == 500
     err = r.json()["error"]
     assert err["code"] == "INTERNAL_ERROR"
     assert "secret" not in r.text
-    assert err["correlation_id"] == "crash-trace-1"
+    assert err["correlation_id"] == r.headers["X-Correlation-ID"] == "crash-trace-1"
+    assert r.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
 
 
 def test_log_formatter_drops_unsafe_extra_fields():
