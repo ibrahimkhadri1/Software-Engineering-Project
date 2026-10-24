@@ -21,6 +21,8 @@ def test_second_publish_of_the_same_submission_raises(attempt):
     again = PublishAttempt("101", "202", "303", "1")
     with pytest.raises(DuplicatePublishError):
         again.begin(Status.APPROVED, published)
+    with pytest.raises(DuplicatePublishError):
+        again.begin(Status.PUBLISHED, published)
 
 
 def test_a_new_submission_attempt_is_a_different_publish(attempt):
