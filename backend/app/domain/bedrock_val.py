@@ -63,7 +63,7 @@ def _points(value: object) -> Decimal:
     points = Decimal(str(value))
     if not points.is_finite():
         raise BedrockValError("score is not finite")
-    return points
+    return round(points, 2)
 
 
 def _parse(raw: object, rubric: RubricStruct) -> GradeSuggestion:

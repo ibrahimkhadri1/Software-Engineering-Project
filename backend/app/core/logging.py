@@ -6,7 +6,8 @@ from datetime import UTC, datetime
 correlation_id: ContextVar[str] = ContextVar("correlation_id", default="-")
 
 # Allowlist: any other `extra=` field is dropped so student content can't reach the logs.
-SAFE_FIELDS = ("method", "path", "status", "latency_ms", "safe_error_code", "result_id", "count")
+SAFE_FIELDS = ("method", "path", "status", "latency_ms", "safe_error_code", "result_id", "count",
+               "input_tokens", "output_tokens", "stop_reason")
 
 
 class JsonFormatter(logging.Formatter):
@@ -30,3 +31,4 @@ def setup_logging(level: str) -> None:
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(level)
+    logging.getLogger("botocore").setLevel(logging.WARNING)  # its DEBUG lines hold the whole prompt
