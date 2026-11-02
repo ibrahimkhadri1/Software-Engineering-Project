@@ -103,6 +103,31 @@ def test_bad_rubric_pdfs_are_refused(api, data, status_code, code):
     assert (r.status_code, r.json()["error"]["code"]) == (status_code, code)
 
 
+def test_rubric_to_published_end_to_end(api):
+    """TC-010: rubric, AI suggestion, human edit, approval, Canvas publication, status PUBLISHED, no second post."""
+    assert api.post("/api/grading/rubric/preview", json={"rubric_text": RUBRIC_TEXT}).json()["max_score"] == 21
+    batch = start_batch(api)
+    alan = result_id(batch, "Alan Turing")
+    suggestion = api.get(f"/api/grading/results/{alan}").json()
+    assert (suggestion["status"], suggestion["suggested_score"]) == ("AWAITING_REVIEW", 19)
+    assert suggestion["suggested_feedback"]
+    assert api.app.state.canvas.published == []
+
+    review(api, alan, action="edit", score=18.5, feedback="Nearly there")
+    assert publish(api, batch, alan) == [{"result_id": alan, "ok": True}]
+    batch = wait_idle(api, batch["id"])
+
+    row = next(r for r in batch["results"] if r["id"] == alan)
+    assert (row["status"], row["suggested_score"], row["final_score"]) == ("PUBLISHED", 19, 18.5)
+    assert batch["counts"] == {"total": 7, "pending_ai": 0, "ready_for_review": 3, "approved": 1, "failed": 3}
+    assert api.app.state.canvas.published == [{
+        "course_id": "1001", "assignment_id": "2001", "student_id": "3002", "attempt": "1",
+        "score": 18.5, "comment": "Nearly there",
+    }]
+    assert publish(api, batch, alan)[0]["code"] == "DUPLICATE_PUBLISH"
+    assert len(api.app.state.canvas.published) == 1
+
+
 def test_accepted_result_publishes_once(api):
     """TC-005 accept, TC-006 a second publish posts nothing."""
     batch = start_batch(api)
@@ -129,12 +154,16 @@ def test_the_same_submission_in_a_second_batch_is_not_published_again(api):
 
 
 def test_only_reviewed_results_of_the_batch_are_published(api):
+    """TC-009: unreviewed, rejected and failed-AI results never reach Canvas."""
     batch = start_batch(api)
-    alan = result_id(batch, "Alan Turing")
+    alan, ada = result_id(batch, "Alan Turing"), result_id(batch, "Ada Lovelace")
+    donald = result_id(batch, "Donald Knuth")
+    review(api, ada, action="reject")
     unknown = str(uuid.uuid4())
-    outcomes = publish(api, batch, alan, unknown)
-    assert [o["code"] for o in outcomes] == ["NOT_REVIEWED", "NOT_FOUND"]
-    assert status(api, alan) == "AWAITING_REVIEW"
+    outcomes = publish(api, batch, alan, ada, donald, unknown)
+    assert [o["code"] for o in outcomes] == ["NOT_REVIEWED", "NOT_REVIEWED", "NOT_REVIEWED", "NOT_FOUND"]
+    assert (status(api, alan), status(api, ada), status(api, donald)) == (
+        "AWAITING_REVIEW", "REJECTED", "AI_ERROR_MANUAL_REVIEW")
     assert api.app.state.canvas.published == []
 
 
@@ -180,7 +209,7 @@ def test_edit_keeps_the_ai_suggestion(api):
 
 
 def test_canvas_failure_publish_ends_in_manual_review(api, monkeypatch):
-    """TC-009 through the API: the fake Canvas always fails for Grace Hopper."""
+    """The fake Canvas always fails for Grace Hopper."""
     monkeypatch.setattr("app.domain.publish.BACKOFF_SECONDS", (0, 0))
     batch = start_batch(api)
     grace = result_id(batch, "Grace Hopper")
