@@ -3,15 +3,17 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.db.models import AuditEvent, GradingResult
-from app.domain.bedrock_val import BedrockVal, BedrockValError
+from app.domain.bedrock_val import BedrockVal, BedrockValError, GradeSuggestion
+from app.domain.partial_credit import PartialCreditCounter
 from app.domain.publish import BACKOFF_SECONDS, PublishAttempt
-from app.domain.rubric import rubric_parser
+from app.domain.rubric import RubricStruct, rubric_parser
 from app.domain.status import Status, transition
 from app.domain.submission import SubmissionError, extract_text
 from app.integrations.canvas import Canvas, CanvasError
@@ -19,6 +21,15 @@ from app.integrations.grader import AIGrader, GraderError
 from app.services.retention import purge_content
 
 log = logging.getLogger(__name__)
+
+MAX_AI_CHARS = 200_000  # cost cap per attempt; the 5 MB file limit allows far more
+
+
+def _apply_keyword_credit(suggestion: GradeSuggestion, rubric: RubricStruct, text: str) -> None:
+    for score, criterion in zip(suggestion.criteria, rubric.criteria, strict=True):
+        if criterion.accepted_keywords:
+            score.awarded_points = PartialCreditCounter(criterion).add_partialcredit(text)
+    suggestion.total = sum((s.awarded_points for s in suggestion.criteria), Decimal(0))
 
 
 class Runner:
@@ -80,6 +91,8 @@ class Runner:
                     row.submission_text = await self._submission_text(row.attachments)
             except (SubmissionError, CanvasError) as e:
                 return await self._fail(session, row, str(e))
+            if len(row.submission_text) > MAX_AI_CHARS:
+                return await self._fail(session, row, "Submission too long for AI grading")
             rubric = rubric_parser(row.batch.rubric_text)
             validator = BedrockVal(rubric)
             correction = None
@@ -97,7 +110,9 @@ class Runner:
                     elif validator.can_retry:
                         await asyncio.sleep(BACKOFF_SECONDS[validator.retry_attempt - 1])
             else:
-                return await self._fail(session, row, "AI output invalid after 3 attempts")
+                failure = "AI service unavailable" if raw is None else "AI output invalid"
+                return await self._fail(session, row, f"{failure} after 3 attempts")
+            _apply_keyword_credit(suggestion, rubric, row.submission_text)
             row.ai_output = {
                 "criteria": [{"criterion_id": c.criterion_id, "awarded_points": float(c.awarded_points),
                               "rationale": c.rationale, "feedback": c.feedback} for c in suggestion.criteria],

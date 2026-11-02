@@ -8,8 +8,9 @@ and staff review, edit or reject every suggestion. Only approved grades are publ
 - **Backend:** FastAPI + SQLAlchemy + PostgreSQL (`backend/`)
 - **Services:** Auth0 (sign-in), Canvas REST API, Amazon Bedrock (Claude Sonnet 4.5)
 
-**Current build (alpha):** sign-in uses the real Auth0 tenant. Canvas and the AI grader are fakes built into the
-backend, so no Canvas or AWS account is needed, no real grades are posted and the scores are not real AI output.
+**Current build (alpha):** sign-in uses the real Auth0 tenant and Canvas is a fake built into the backend, so no Canvas
+account is needed and no real grades are posted. The AI grader is a fake by default, so no AWS account is needed and
+the scores are not real AI output. [Real AI grading](#real-ai-grading) turns on Amazon Bedrock.
 
 ## Run it locally
 
@@ -79,7 +80,7 @@ Total: 21
 
 Rubric format: one criterion per line, `Title: <points> [keywords: a, b, c; <n> each] <description>`. The keyword part
 and the description are optional, and so is a final `Total: <points>` line. The fake grader gives full points on
-criteria without keywords and keyword credit on the others.
+criteria without keywords. Criteria with keywords are always scored by keyword matching, with either grader.
 
 **Starting over:** a student's grade can only be published once, across all grading runs, until the data expires. To
 publish the same students again, stop the backend, wipe the local database and recreate its tables, then start the
@@ -95,6 +96,20 @@ uv run alembic upgrade head
 **Testing data deletion:** set `DATA_TTL_HOURS=0` in `backend/.env` and start the backend, then create a grading run
 and restart the backend. The deletion sweep runs at startup and every 10 minutes, so reloading the run's page shows
 "Not found". Afterwards set it back to 48 and restart the backend.
+
+## Real AI grading
+
+With `AI_MODE=bedrock` and an AWS key in `backend/.env`, the backend sends each submission to Claude Sonnet 4.5 on
+Amazon Bedrock. Every call costs money, so the default stays `fake`, and the automated tests always use the fake. The
+scores in the table above then come from the model and can differ, and Donald's and Margaret's markers no longer force
+a failure. Each call logs its token counts as a `bedrock call` line.
+
+| Situation | Status | Message on the Review page |
+|---|---|---|
+| Bedrock unreachable, throttled or refusing the key on all three tries | Needs a manual grade | "AI service unavailable after 3 attempts" |
+| Model output invalid on all three tries | Needs a manual grade | "AI output invalid after 3 attempts" |
+| Submission over 200,000 characters (no AI call) | Needs a manual grade | "Submission too long for AI grading" |
+| Model flags the submission as hard to evaluate | Ready for review | A notice and the model's warnings |
 
 ## Test cases
 
@@ -134,8 +149,7 @@ CI runs the backend and frontend checks on every pull request.
 
 Alpha limits:
 
-- Canvas and the AI grader are fakes. "Canvas connected" always shows, there is no Canvas OAuth, and publishes are held
-  in memory.
+- Canvas is a fake. "Canvas connected" always shows, there is no Canvas OAuth, and publishes are held in memory.
 - The app runs locally only; it is not deployed yet.
 - A failed publish has no retry button. Grace Hopper's row stays in "Publish failed: check Canvas" until the data expires.
 - A reload may ask for **Log in** again where the browser blocks third-party cookies.
@@ -146,6 +160,9 @@ Current behaviour:
 - Rubrics must follow the format above; anything else gets an error naming the line.
 - Student code is read as text and never run.
 - The final grade is one total plus feedback. Per-criterion AI scores are shown read-only.
+- With real AI grading, a keyword criterion's rationale is the model's own reading and can disagree with the score,
+  which always comes from keyword matching.
+- Scores are rounded to two decimal places.
 - Publishing clears the submission text and feedback. The row keeps its ids, student name and scores until the 48-hour
   deletion, and there is no manual delete button.
 - Dashboard counts: **Approved** includes published rows; **Failed** includes rows that need a manual grade.
@@ -168,6 +185,9 @@ local values.
 | `GRADE_CONCURRENCY` | Submissions graded at once |
 | `DATA_TTL_HOURS` | Hours before a grading run is deleted |
 | `AUTH0_DOMAIN`, `AUTH0_AUDIENCE` | Auth0 tenant and API |
+| `AI_MODE` | `fake` (default) or `bedrock` |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | AWS key, for `bedrock` only |
+| `AWS_REGION`, `BEDROCK_MODEL_ID` | Optional; default to `us-west-2` and the Sonnet 4.5 US inference profile |
 
 | Frontend | Purpose |
 |---|---|
