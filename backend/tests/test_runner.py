@@ -167,7 +167,6 @@ async def test_a_successful_publish_purges_the_content(sessions):
 
 
 async def test_three_failed_publishes_end_in_manual_review(sessions, monkeypatch, caplog):
-    """TC-009: Canvas fails three times; the result waits for a person and keeps its grade."""
     monkeypatch.setattr("app.domain.publish.BACKOFF_SECONDS", (0, 0))
     result_id = await add_result(sessions, status=Status.PUBLISHING, student_id="3003",
                                  final_score=Decimal(17), final_feedback="Good")

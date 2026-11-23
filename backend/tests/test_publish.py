@@ -1,4 +1,4 @@
-"""TC-006 PublishAttempt (and the TC-009 retry limit)."""
+"""TC-006 PublishAttempt (and the TC-009 approval check)."""
 import pytest
 
 from app.domain.publish import DuplicatePublishError, PublishAttempt, PublishError
