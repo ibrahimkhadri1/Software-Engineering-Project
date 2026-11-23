@@ -16,7 +16,9 @@ def pdf_text(data: bytes, max_pages: int = 50) -> str:
             raise PdfError("encrypted PDF")
         if len(reader.pages) > max_pages:
             raise PdfError(f"more than {max_pages} pages")
-        text = "\n".join(page.extract_text() for page in reader.pages)
+        # Layout mode rebuilds lines from positions; plain mode breaks after every word of a Google Docs export.
+        text = "\n".join(page.extract_text(extraction_mode="layout", layout_mode_space_vertically=False)
+                         for page in reader.pages)
     except PdfError:
         raise
     except Exception as e:  # pypdf raises assorted error types on malformed input

@@ -13,7 +13,7 @@ class Status(StrEnum):
     PUBLISHED = "PUBLISHED"
 
 
-# A manual grade (after Reject or an AI failure) re-enters review; nothing jumps straight to APPROVED.
+# A manual grade or an undone reject re-enters review; a failed publish may only go back to PUBLISHING.
 TRANSITIONS: dict[Status, frozenset[Status]] = {
     Status.READY_FOR_GRADING: frozenset({Status.BEING_GRADED}),
     Status.BEING_GRADED: frozenset({Status.AWAITING_REVIEW, Status.AI_ERROR_MANUAL_REVIEW}),
@@ -22,7 +22,7 @@ TRANSITIONS: dict[Status, frozenset[Status]] = {
     Status.REJECTED: frozenset({Status.AWAITING_REVIEW}),
     Status.APPROVED: frozenset({Status.PUBLISHING}),
     Status.PUBLISHING: frozenset({Status.PUBLISHED, Status.PUBLISH_ERROR_MANUAL_REVIEW}),
-    Status.PUBLISH_ERROR_MANUAL_REVIEW: frozenset(),
+    Status.PUBLISH_ERROR_MANUAL_REVIEW: frozenset({Status.PUBLISHING}),
     Status.PUBLISHED: frozenset(),
 }
 

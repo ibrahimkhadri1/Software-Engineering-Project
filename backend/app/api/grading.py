@@ -3,7 +3,7 @@ import uuid
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
@@ -18,7 +18,7 @@ from app.db.models import PUBLISH_CLAIMED, AuditEvent, GradingBatch, GradingResu
 from app.db.session import Session
 from app.domain.pdf import PdfError, pdf_text
 from app.domain.publish import DuplicatePublishError, PublishAttempt, PublishError
-from app.domain.review import PredictionAcceptStatus, ReviewError
+from app.domain.review import PredictionAcceptStatus, ReviewError, criteria_total
 from app.domain.rubric import RubricError, RubricStruct, rubric_parser
 from app.domain.status import Status, transition
 from app.domain.submission import SubmissionError, SubmissionStatus, extract_text
@@ -47,8 +47,9 @@ class BatchIn(RubricIn):
 
 
 class ReviewIn(BaseModel):
-    action: Literal["accept", "edit", "reject", "manual"]
+    action: Literal["accept", "edit", "reject", "undo_reject", "manual"]
     score: Decimal | None = Field(None, allow_inf_nan=False)
+    criterion_scores: dict[str, Annotated[Decimal, Field(allow_inf_nan=False)]] | None = Field(None, max_length=100)
     feedback: str | None = Field(None, max_length=10_000)
     comments: str = Field("", max_length=10_000)
 
@@ -124,7 +125,7 @@ async def create_batch(body: BatchIn, request: Request, session: Session, user: 
         ))
     session.add(batch)
     await session.flush()
-    session.add(AuditEvent(action="batch_created", batch_id=batch.id))
+    session.add(AuditEvent(action="batch_created", auth0_sub=user, batch_id=batch.id))
     await session.commit()
     for result in batch.results:
         if result.status == Status.READY_FOR_GRADING:
@@ -140,6 +141,11 @@ async def get_batch(batch_id: uuid.UUID, session: Session, user: User):
     if batch is None or batch.auth0_sub != user:
         raise _not_found()
     results = sorted(batch.results, key=lambda r: r.student_name)
+    claimed_elsewhere = {tuple(key) for key in await session.execute(
+        select(GradingResult.student_id, GradingResult.attempt)
+        .where(GradingResult.course_id == batch.course_id, GradingResult.assignment_id == batch.assignment_id,
+               GradingResult.batch_id != batch.id, GradingResult.status.in_(PUBLISH_CLAIMED))
+    )}
     return {
         "id": batch.id, "course_id": batch.course_id, "assignment_id": batch.assignment_id,
         "assignment_name": batch.assignment_name, "expires_at": batch.expires_at,
@@ -148,6 +154,7 @@ async def get_batch(batch_id: uuid.UUID, session: Session, user: User):
         "results": [{
             "id": r.id, "student_name": r.student_name, "file_type": r.file_type, "status": r.status,
             "suggested_score": r.suggested_score, "final_score": r.final_score, "error": r.error,
+            "claimed_elsewhere": (r.student_id, r.attempt) in claimed_elsewhere,
         } for r in results],
     }
 
@@ -170,7 +177,7 @@ async def get_result(result_id: uuid.UUID, session: Session, user: User):
         "criteria": _criteria(rubric),
         "max_score": rubric.max_score, "ai_output": r.ai_output,
         "suggested_score": r.suggested_score, "suggested_feedback": r.suggested_feedback,
-        "final_score": r.final_score, "final_feedback": r.final_feedback,
+        "final_score": r.final_score, "final_feedback": r.final_feedback, "final_criteria": r.final_criteria,
         "review_action": r.review_action, "review_comments": r.review_comments,
     }
 
@@ -180,21 +187,28 @@ async def review_result(result_id: uuid.UUID, body: ReviewIn, session: Session, 
     r = await _result(session, result_id, user, lock=True)
     if r.status not in REVIEWABLE:
         raise AppError("INVALID_STATE", "This result can no longer be reviewed.", 409)
+    rubric = rubric_parser(r.batch.rubric_text)
     review = PredictionAcceptStatus(
-        rubric_parser(r.batch.rubric_text).max_score, r.suggested_score, r.suggested_feedback,
+        rubric.max_score, r.suggested_score, r.suggested_feedback,
         r.final_score, r.final_feedback, r.review_comments or "", r.review_action,
     )
+    criterion_scores = None
     try:
         if body.action == "accept":
             review.accept_prediction()
         elif body.action == "reject":
             review.reject_prediction(body.comments)
-        elif body.score is None:
-            raise ReviewError("a score is required")
-        elif body.action == "edit":
-            review.edit_prediction(body.score, body.feedback)
+        elif body.action == "undo_reject":
+            review.undo_reject()
         else:
-            review.manual_grade(body.score, body.feedback)
+            criterion_scores = body.criterion_scores
+            score = body.score if criterion_scores is None else criteria_total(rubric, criterion_scores)
+            if score is None:
+                raise ReviewError("a score is required")
+            if body.action == "edit":
+                review.edit_prediction(score, body.feedback)
+            else:
+                review.manual_grade(score, body.feedback)
         new_status = Status.REJECTED if body.action == "reject" else Status.AWAITING_REVIEW
         if r.status != new_status:
             r.status = transition(r.status, new_status)
@@ -202,8 +216,9 @@ async def review_result(result_id: uuid.UUID, body: ReviewIn, session: Session, 
         raise AppError("REVIEW_INVALID", f"{str(e).capitalize()}.", 422) from e
     r.final_score, r.final_feedback = review.final_score, review.final_feedback
     r.review_comments, r.review_action = review.comments, review.validation_status
+    r.final_criteria = criterion_scores and {k: float(v) for k, v in criterion_scores.items()}
     r.reviewed_at = datetime.now(UTC)
-    session.add(AuditEvent(action=f"review_{body.action}", batch_id=r.batch_id, result_id=r.id))
+    session.add(AuditEvent(action=f"review_{body.action}", auth0_sub=user, batch_id=r.batch_id, result_id=r.id))
     await session.commit()
     return await get_result(result_id, session, user)
 
@@ -215,7 +230,7 @@ async def approve_and_publish(batch_id: uuid.UUID, body: PublishIn, request: Req
         raise _not_found()
     outcomes = []
     for result_id in body.result_ids:
-        outcome = await _approve_and_claim(session, batch_id, result_id)
+        outcome = await _approve_and_claim(session, batch_id, result_id, user)
         if outcome["ok"]:
             await session.commit()
             request.app.state.runner.publish(result_id)
@@ -225,14 +240,18 @@ async def approve_and_publish(batch_id: uuid.UUID, body: PublishIn, request: Req
     return {"outcomes": outcomes}
 
 
-async def _approve_and_claim(session: AsyncSession, batch_id: uuid.UUID, result_id: uuid.UUID) -> dict:
+async def _approve_and_claim(session: AsyncSession, batch_id: uuid.UUID, result_id: uuid.UUID, user: str) -> dict:
     r = await session.get(GradingResult, result_id, with_for_update=True)
     if r is None or r.batch_id != batch_id:
         return {"ok": False, "code": "NOT_FOUND", "message": "Result not found."}
+    if r.status == Status.PUBLISH_ERROR_MANUAL_REVIEW:  # a retry: the row already holds the publish slot
+        r.status, r.publish_attempts, r.error = transition(r.status, Status.PUBLISHING), 0, None
+        session.add(AuditEvent(action="publish_retry", auth0_sub=user, batch_id=batch_id, result_id=r.id))
+        return {"ok": True}
     now = datetime.now(UTC)
     if r.status == Status.AWAITING_REVIEW and r.final_score is not None:
         r.status, r.approved_at = transition(r.status, Status.APPROVED), now
-        session.add(AuditEvent(action="approved", batch_id=batch_id, result_id=r.id))
+        session.add(AuditEvent(action="approved", auth0_sub=user, batch_id=batch_id, result_id=r.id))
     claimed = await session.execute(
         select(GradingResult.course_id, GradingResult.assignment_id, GradingResult.student_id, GradingResult.attempt)
         .where(GradingResult.course_id == r.course_id, GradingResult.assignment_id == r.assignment_id,

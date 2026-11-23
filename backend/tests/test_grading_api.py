@@ -2,9 +2,11 @@ import time
 import uuid
 
 import pytest
-from conftest import RUBRIC_TEXT, make_pdf, token
+from conftest import GRADER, RUBRIC_TEXT, make_pdf, token
+from sqlalchemy import select
 
 from app.api.grading import RUBRIC_PDF_BYTES
+from app.db.models import AuditEvent
 from app.integrations.canvas import CanvasError, Submission
 
 BUSY = {"READY_FOR_GRADING", "BEING_GRADED", "PUBLISHING"}
@@ -118,7 +120,7 @@ def test_rubric_to_published_end_to_end(api):
     batch = wait_idle(api, batch["id"])
 
     row = next(r for r in batch["results"] if r["id"] == alan)
-    assert (row["status"], row["suggested_score"], row["final_score"]) == ("PUBLISHED", 19, 18.5)
+    assert (row["status"], row["suggested_score"], row["final_score"]) == ("PUBLISHED", None, None)
     assert batch["counts"] == {"total": 7, "pending_ai": 0, "ready_for_review": 3, "approved": 1, "failed": 3}
     assert api.app.state.canvas.published == [{
         "course_id": "1001", "assignment_id": "2001", "student_id": "3002", "attempt": "1",
@@ -143,6 +145,22 @@ def test_accepted_result_publishes_once(api):
     assert len(api.app.state.canvas.published) == 1
 
 
+def test_audit_rows_name_the_grader_who_acted(api):
+    batch = start_batch(api)
+    ada = result_id(batch, "Ada Lovelace")
+    review(api, ada, action="accept")
+    publish(api, batch, ada)
+    wait_idle(api, batch["id"])
+
+    async def audit():
+        async with api.app.state.sessions() as session:
+            rows = await session.execute(select(AuditEvent.action, AuditEvent.auth0_sub).order_by(AuditEvent.id))
+            return rows.all()
+
+    assert [tuple(row) for row in api.portal.call(audit)] == [
+        ("batch_created", GRADER), ("review_accept", GRADER), ("approved", GRADER), ("published", None)]
+
+
 def test_the_same_submission_in_a_second_batch_is_not_published_again(api):
     first, second = start_batch(api), start_batch(api)
     for batch in (first, second):
@@ -151,6 +169,9 @@ def test_the_same_submission_in_a_second_batch_is_not_published_again(api):
     wait_idle(api, first["id"])
     assert publish(api, second, result_id(second, "Ada Lovelace"))[0]["code"] == "DUPLICATE_PUBLISH"
     assert status(api, result_id(second, "Ada Lovelace")) == "AWAITING_REVIEW"
+    flagged = [[r["student_name"] for r in wait_idle(api, b["id"])["results"] if r["claimed_elsewhere"]]
+               for b in (first, second)]
+    assert flagged == [[], ["Ada Lovelace"]]
 
 
 def test_only_reviewed_results_of_the_batch_are_published(api):
@@ -191,9 +212,12 @@ def test_failed_ai_results_need_a_manual_grade(api):
 @pytest.mark.parametrize("body, code", [
     ({"action": "edit", "score": 22, "feedback": "x"}, "REVIEW_INVALID"),
     ({"action": "edit", "feedback": "x"}, "REVIEW_INVALID"),
-    ({"action": "edit", "score": 5, "feedback": " "}, "REVIEW_INVALID"),
     ({"action": "manual", "score": 5, "feedback": "x"}, "REVIEW_INVALID"),
+    ({"action": "undo_reject"}, "REVIEW_INVALID"),
+    ({"action": "edit", "criterion_scores": {"c1": 11, "c2": 1, "c3": 1}}, "REVIEW_INVALID"),
+    ({"action": "edit", "criterion_scores": {"c1": 1}}, "REVIEW_INVALID"),
     ({"action": "edit", "score": "NaN", "feedback": "x"}, "VALIDATION_ERROR"),
+    ({"action": "edit", "criterion_scores": {"c1": "NaN", "c2": 1, "c3": 1}}, "VALIDATION_ERROR"),
     ({"action": "approve"}, "VALIDATION_ERROR"),
 ])
 def test_review_input_is_validated(api, body, code):
@@ -208,8 +232,31 @@ def test_edit_keeps_the_ai_suggestion(api):
     assert (edited["suggested_score"], edited["final_score"], edited["review_action"]) == (19, 18.5, "edited")
 
 
-def test_canvas_failure_publish_ends_in_manual_review(api, monkeypatch):
-    """The fake Canvas always fails for Grace Hopper."""
+def test_criterion_scores_set_the_final_score_and_feedback_is_optional(api):
+    batch = start_batch(api)
+    alan = result_id(batch, "Alan Turing")
+    edited = review(api, alan, action="edit", score=1, criterion_scores={"c1": 9.5, "c2": 5, "c3": 2}).json()
+    assert (edited["final_score"], edited["final_feedback"]) == (16.5, "")
+    assert edited["final_criteria"] == {"c1": 9.5, "c2": 5, "c3": 2}
+    assert review(api, alan, action="accept").json()["final_criteria"] is None
+    review(api, alan, action="edit", criterion_scores={"c1": 9.5, "c2": 5, "c3": 2})
+    publish(api, batch, alan)
+    wait_idle(api, batch["id"])
+    assert [(p["score"], p["comment"]) for p in api.app.state.canvas.published] == [(16.5, "")]
+    assert api.get(f"/api/grading/results/{alan}").json()["final_criteria"] is None
+
+
+def test_a_reject_can_be_undone(api):
+    batch = start_batch(api)
+    alan = result_id(batch, "Alan Turing")
+    review(api, alan, action="reject")
+    restored = review(api, alan, action="undo_reject").json()
+    assert (restored["status"], restored["review_action"], restored["final_score"]) == (
+        "AWAITING_REVIEW", "pending", None)
+    assert review(api, alan, action="accept").json()["final_score"] == 19
+
+
+def test_canvas_failure_publish_ends_in_manual_review_until_retried(api, monkeypatch):
     monkeypatch.setattr("app.domain.publish.BACKOFF_SECONDS", (0, 0))
     batch = start_batch(api)
     grace = result_id(batch, "Grace Hopper")
@@ -218,6 +265,14 @@ def test_canvas_failure_publish_ends_in_manual_review(api, monkeypatch):
     batch = wait_idle(api, batch["id"])
     assert status(api, grace) == "PUBLISH_ERROR_MANUAL_REVIEW"
     assert batch["counts"]["failed"] == 4
+    assert api.app.state.canvas.published == []
+
+    assert publish(api, batch, grace) == [{"result_id": grace, "ok": True}]
+    batch = wait_idle(api, batch["id"])
+    detail = api.get(f"/api/grading/results/{grace}").json()
+    assert (detail["status"], detail["error"]) == ("PUBLISHED", None)
+    assert [p["score"] for p in api.app.state.canvas.published] == [17]
+    assert publish(api, batch, grace)[0]["code"] == "DUPLICATE_PUBLISH"
 
 
 def test_canvas_outage_has_a_clear_message(api, monkeypatch):

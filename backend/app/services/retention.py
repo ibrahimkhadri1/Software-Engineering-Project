@@ -15,6 +15,7 @@ def purge_content(result: GradingResult) -> None:
     result.attachments = []
     result.submission_text = result.ai_output = result.suggested_feedback = None
     result.final_feedback = result.review_comments = None
+    result.suggested_score = result.final_score = result.final_criteria = None
 
 
 async def purge_expired(session: AsyncSession, now: datetime) -> int:

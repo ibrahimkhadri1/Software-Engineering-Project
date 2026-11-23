@@ -55,7 +55,20 @@ def rubric():
 
 def make_pdf(lines: list[str]) -> bytes:
     text = " ".join("(" + line.replace("(", r"\(").replace(")", r"\)") + ") Tj T*" for line in lines)
-    content = f"BT /F1 12 Tf 14 TL 72 720 Td {text} ET"
+    return _pdf(f"BT /F1 12 Tf 14 TL 72 720 Td {text} ET")
+
+
+def make_google_docs_style_pdf(lines: list[str]) -> bytes:
+    blocks = []
+    for row, line in enumerate(lines):
+        x = 72
+        for word in line.split():
+            blocks.append(f"BT /F1 12 Tf 1 0 0 1 0 800 Tm {x} {-80 - 14 * row} Td ({word}) Tj ET")
+            x += 7 * len(word) + 4
+    return _pdf(" ".join(blocks))
+
+
+def _pdf(content: str) -> bytes:
     objects = [
         "<< /Type /Catalog /Pages 2 0 R >>",
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",

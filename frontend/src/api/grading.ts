@@ -14,6 +14,7 @@ export interface ResultRow {
   suggested_score: number | null
   final_score: number | null
   error: string | null
+  claimed_elsewhere: boolean
 }
 
 export interface Batch {
@@ -25,7 +26,7 @@ export interface Batch {
   results: ResultRow[]
 }
 
-export interface Result extends ResultRow {
+export interface Result extends Omit<ResultRow, 'claimed_elsewhere'> {
   batch_id: string
   attempt: string
   submission_text: string | null
@@ -38,6 +39,7 @@ export interface Result extends ResultRow {
   } | null
   suggested_feedback: string | null
   final_feedback: string | null
+  final_criteria: Record<string, number> | null
   review_action: 'pending' | 'accepted' | 'edited' | 'rejected'
 }
 
