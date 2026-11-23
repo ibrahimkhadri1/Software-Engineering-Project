@@ -1,6 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useAuth0 } from '@auth0/auth0-react'
+import { Navigate, Route, Routes } from 'react-router'
 import { ApiError, apiFetch, setTokenSource } from './api/client'
+import Dashboard from './screens/Dashboard'
+import Review from './screens/Review'
+import RubricSetup from './screens/RubricSetup'
 
 export default function App() {
   const { isLoading, isAuthenticated, error, loginWithRedirect } = useAuth0()
@@ -59,8 +63,15 @@ function GraderGate() {
   }
   return (
     <Screen>
-      <p>Signed in as {user?.email ?? user?.name}.</p>
-      {logoutButton}
+      <p>
+        Signed in as {user?.email ?? user?.name}. {logoutButton}
+      </p>
+      <Routes>
+        <Route path="/" element={<RubricSetup />} />
+        <Route path="/batches/:batchId" element={<Dashboard />} />
+        <Route path="/results/:resultId" element={<Review />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
     </Screen>
   )
 }

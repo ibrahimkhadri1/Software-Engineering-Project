@@ -24,6 +24,12 @@ export function setTokenSource(source: () => Promise<string | undefined>) {
   tokenSource = source
 }
 
+export const jsonBody = (method: string, data: unknown): RequestInit => ({
+  method,
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(data),
+})
+
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   if (tokenSource) {
