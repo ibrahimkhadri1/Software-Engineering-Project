@@ -16,11 +16,11 @@ class PartialCreditCounter:
         for keyword in self.accepted_keywords:
             if re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", text, re.IGNORECASE):
                 self.matched.add(keyword.lower())
-        if self.points_per_keyword is None:  # multiply first so all keywords give exactly the max
+        if self.points_per_keyword is None:
             credit = self.max_partialcredit * len(self.matched) / max(len(self.accepted_keywords), 1)
         else:
             credit = len(self.matched) * self.points_per_keyword
-        self.count_partialcredit = min(credit, self.max_partialcredit)
+        self.count_partialcredit = round(min(credit, self.max_partialcredit), 2)
         return self.count_partialcredit
 
     def validate_partialcredit(self) -> bool:

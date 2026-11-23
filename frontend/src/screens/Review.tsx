@@ -83,6 +83,16 @@ export default function Review() {
           Suggested score: {result.suggested_score} / {max}. {result.suggested_feedback}
         </p>
       )}
+      {result.ai_output?.manual_review_required && (
+        <p role="alert">The AI could not evaluate part of this submission reliably. Check it closely.</p>
+      )}
+      {!!result.ai_output?.warnings.length && (
+        <ul>
+          {result.ai_output.warnings.map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
+      )}
       <table>
         <thead>
           <tr>

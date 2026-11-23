@@ -29,7 +29,7 @@ def test_credit_is_capped_and_keywords_count_once_across_files(rubric):
 
 def test_even_share_reaches_exactly_the_max():
     counter = PartialCreditCounter(rubric_parser("Terms: 10 [keywords: a, b, c]").criteria[0])
-    assert counter.add_partialcredit("a") == Decimal(10) / 3
+    assert counter.add_partialcredit("a") == Decimal("3.33")
     assert counter.add_partialcredit("b c") == Decimal(10)
 
 

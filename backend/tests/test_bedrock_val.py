@@ -37,6 +37,12 @@ def test_valid_output_is_accepted_and_total_recomputed(rubric):
     assert val.max_score == Decimal(21) and val.min_score == 0
 
 
+def test_scores_are_rounded_to_cents_before_the_total(rubric):
+    grade = BedrockVal(rubric).validate_output(with_(["criteria", 0, "awarded_points"], 6.666666666666667))
+    assert grade.criteria[0].awarded_points == Decimal("6.67")
+    assert grade.total == Decimal("15.67")
+
+
 @pytest.mark.parametrize("raw", [
     "not json",
     with_(["schema_version"], "2.0"),

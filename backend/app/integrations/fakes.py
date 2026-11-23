@@ -1,7 +1,6 @@
 from decimal import Decimal
 from pathlib import Path
 
-from app.domain.partial_credit import PartialCreditCounter
 from app.domain.rubric import RubricStruct
 from app.integrations.canvas import Assignment, Attachment, CanvasError, Course, Submission
 
@@ -65,9 +64,7 @@ class FakeGrader:
             return {"schema_version": "1.0", "criteria": "not a list"}
         criteria = []
         for c in rubric.criteria:
-            points = PartialCreditCounter(c).add_partialcredit(submission_text) if c.accepted_keywords else c.max_points
-            if OUT_OF_RANGE_MARKER in submission_text:
-                points = c.max_points + 1
+            points = c.max_points + 1 if OUT_OF_RANGE_MARKER in submission_text else c.max_points
             criteria.append({"criterion_id": c.criterion_id, "awarded_points": float(points),
                              "rationale": f"Fake grader: {c.title} scored without a model.",
                              "feedback": f"{c.title}: compare your work with the rubric."})

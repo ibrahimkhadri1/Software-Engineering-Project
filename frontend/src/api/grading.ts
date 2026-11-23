@@ -31,7 +31,11 @@ export interface Result extends ResultRow {
   submission_text: string | null
   criteria: Criterion[]
   max_score: number
-  ai_output: { criteria: { criterion_id: string; awarded_points: number; rationale: string; feedback: string }[] } | null
+  ai_output: {
+    criteria: { criterion_id: string; awarded_points: number; rationale: string; feedback: string }[]
+    warnings: string[]
+    manual_review_required: boolean
+  } | null
   suggested_feedback: string | null
   final_feedback: string | null
   review_action: 'pending' | 'accepted' | 'edited' | 'rejected'

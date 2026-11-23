@@ -12,7 +12,7 @@ from app.domain.status import Status
 from app.integrations.canvas import CanvasError
 from app.integrations.fakes import FakeCanvas, FakeGrader
 from app.integrations.grader import GraderError
-from app.services.runner import Runner
+from app.services.runner import MAX_AI_CHARS, Runner
 
 pytestmark = pytest.mark.anyio
 
@@ -70,6 +70,41 @@ async def test_a_failed_call_uses_an_attempt_and_backs_off(sessions, monkeypatch
     assert time.perf_counter() - start >= 0.2
     assert (await load(sessions, result_id)).status == Status.AWAITING_REVIEW
     assert grader.corrections == [None, None]
+
+
+async def test_three_failed_calls_are_not_reported_as_invalid_output(sessions, monkeypatch):
+    monkeypatch.setattr("app.services.runner.BACKOFF_SECONDS", (0, 0))
+    result_id = await add_result(sessions, submission_text="answer")
+    grader = ScriptedGrader(GraderError(), GraderError(), GraderError())
+    await Runner(sessions, FakeCanvas(), grader, 1)._grade(result_id)
+    row = await load(sessions, result_id)
+    assert (row.status, row.error) == (Status.AI_ERROR_MANUAL_REVIEW, "AI service unavailable after 3 attempts")
+    assert row.suggested_score is None
+
+
+async def test_keyword_criteria_are_scored_by_the_system_not_the_model(sessions):
+    """TC-004: the model claims full keyword points, the counter finds one keyword; the total follows."""
+    result_id = await add_result(sessions, submission_text="only a loop here")
+    await Runner(sessions, FakeCanvas(), ScriptedGrader(await valid_output()), 1)._grade(result_id)
+    row = await load(sessions, result_id)
+    assert [c["awarded_points"] for c in row.ai_output["criteria"]] == [10, 5, 2]
+    assert row.suggested_score == Decimal(17)
+
+
+async def test_an_out_of_range_keyword_score_still_counts_as_invalid(sessions):
+    result_id = await add_result(sessions, submission_text="[fake:out-of-range] a loop")
+    await Runner(sessions, FakeCanvas(), FakeGrader(), 1)._grade(result_id)
+    assert (await load(sessions, result_id)).status == Status.AI_ERROR_MANUAL_REVIEW
+
+
+async def test_an_oversized_submission_skips_the_ai_and_keeps_its_text(sessions):
+    result_id = await add_result(sessions, submission_text="x" * (MAX_AI_CHARS + 1))
+    grader = ScriptedGrader()
+    await Runner(sessions, FakeCanvas(), grader, 1)._grade(result_id)
+    row = await load(sessions, result_id)
+    assert (row.status, row.error) == (Status.AI_ERROR_MANUAL_REVIEW, "Submission too long for AI grading")
+    assert grader.corrections == []
+    assert len(row.submission_text) == MAX_AI_CHARS + 1
 
 
 async def test_attachments_are_joined_with_their_filenames(sessions):

@@ -18,9 +18,10 @@ from app.db.models import GradingBatch, GradingResult
 from app.domain.rubric import rubric_parser
 from app.main import create_app
 
-# The apps and the alembic subprocess read this, so tests never touch the dev database.
+# The apps and the alembic subprocess read these, so tests never touch the dev database or real Bedrock.
 TEST_DB = make_url(get_settings().database_url).set(database="autograder_test")
 os.environ["DATABASE_URL"] = TEST_DB.render_as_string(hide_password=False)
+os.environ["AI_MODE"] = "fake"
 get_settings.cache_clear()
 TABLES = "grading_results, grading_batches, audit_events"
 

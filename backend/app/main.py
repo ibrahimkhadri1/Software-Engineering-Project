@@ -15,6 +15,7 @@ from app.core.auth import User, current_user
 from app.core.config import get_settings
 from app.core.errors import error_response, register_error_handlers
 from app.core.logging import correlation_id, setup_logging
+from app.integrations.bedrock import bedrock_grader
 from app.integrations.fakes import FakeCanvas, FakeGrader
 from app.services.retention import sweep_forever
 from app.services.runner import Runner
@@ -31,8 +32,9 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI):
         engine = create_async_engine(settings.database_url)
         app.state.sessions = async_sessionmaker(engine, expire_on_commit=False)
-        app.state.canvas = FakeCanvas()  # shortcut: fake Canvas and grader only, swap in live clients once they exist
-        app.state.runner = Runner(app.state.sessions, app.state.canvas, FakeGrader(), settings.grade_concurrency)
+        app.state.canvas = FakeCanvas()  # shortcut: fake Canvas only, swap in the live client once it exists
+        grader = bedrock_grader(settings) if settings.ai_mode == "bedrock" else FakeGrader()
+        app.state.runner = Runner(app.state.sessions, app.state.canvas, grader, settings.grade_concurrency)
         await app.state.runner.resume()
         sweeper = asyncio.create_task(sweep_forever(app.state.sessions))
         yield
