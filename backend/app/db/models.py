@@ -67,6 +67,7 @@ class GradingResult(Base):
     final_feedback: Mapped[str | None] = mapped_column(Text)
     review_action: Mapped[ReviewAction] = mapped_column(default=ReviewAction.PENDING)
     review_comments: Mapped[str | None] = mapped_column(Text)
+    final_criteria: Mapped[dict | None] = mapped_column(JSONB)
     publish_attempts: Mapped[int] = mapped_column(default=0)
     reviewed_at: Mapped[datetime | None]
     approved_at: Mapped[datetime | None]
@@ -82,6 +83,7 @@ class AuditEvent(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     action: Mapped[str]
+    auth0_sub: Mapped[str | None]
     batch_id: Mapped[uuid.UUID | None]
     result_id: Mapped[uuid.UUID | None]
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())

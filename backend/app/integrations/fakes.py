@@ -1,6 +1,7 @@
 from decimal import Decimal
 from pathlib import Path
 
+from app.domain.publish import MAX_ATTEMPTS
 from app.domain.rubric import RubricStruct
 from app.integrations.canvas import Assignment, Attachment, CanvasError, Course, Submission
 
@@ -35,6 +36,7 @@ PUBLISH_FAILS_FOR = frozenset({"3003"})
 class FakeCanvas:
     def __init__(self) -> None:
         self.published: list[dict] = []
+        self.failed_publishes = 0
 
     async def courses(self) -> list[Course]:
         return [COURSE]
@@ -52,7 +54,8 @@ class FakeCanvas:
 
     async def publish(self, course_id: str, assignment_id: str, student_id: str, attempt: str,
                       score: Decimal, comment: str) -> None:
-        if student_id in PUBLISH_FAILS_FOR:
+        if student_id in PUBLISH_FAILS_FOR and self.failed_publishes < MAX_ATTEMPTS:
+            self.failed_publishes += 1
             raise CanvasError()
         self.published.append({"course_id": course_id, "assignment_id": assignment_id, "student_id": student_id,
                                "attempt": attempt, "score": score, "comment": comment})

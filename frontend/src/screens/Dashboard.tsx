@@ -11,7 +11,7 @@ interface Outcome {
 
 const ACTIVE = new Set<Status>(['READY_FOR_GRADING', 'BEING_GRADED', 'PUBLISHING'])
 
-const publishable = (r: ResultRow) => r.status === 'AWAITING_REVIEW' && r.final_score !== null
+const publishable = (r: ResultRow) => r.status === 'AWAITING_REVIEW' && r.final_score !== null && !r.claimed_elsewhere
 
 export default function Dashboard() {
   const { batchId } = useParams()
@@ -40,13 +40,13 @@ export default function Dashboard() {
     return () => clearInterval(timer)
   }, [load, active])
 
-  async function publish() {
-    if (!confirm(`Publish ${selected.size} grade(s) to Canvas? A published grade cannot be published again.`)) return
+  async function publish(ids: string[], question: string) {
+    if (!confirm(question)) return
     setPublishing(true)
     try {
-      const body = jsonBody('POST', { result_ids: [...selected] })
+      const body = jsonBody('POST', { result_ids: ids })
       setOutcomes((await apiFetch<{ outcomes: Outcome[] }>(`/api/grading/batches/${batchId}/approve-and-publish`, body)).outcomes)
-      setSelected(new Set())
+      setSelected(new Set([...selected].filter((id) => !ids.includes(id))))
       await load()
     } catch (e) {
       setError((e as Error).message)
@@ -108,17 +108,33 @@ export default function Dashboard() {
               <td>
                 {STATUS_LABEL[r.status]}
                 {r.error && <small>{r.error}</small>}
+                {r.claimed_elsewhere && <small>Already sent to Canvas, or waiting for a Canvas check, in another grading run</small>}
               </td>
               <td>
                 <Link to={`/results/${r.id}`}>
                   {r.status === 'AI_ERROR_MANUAL_REVIEW' ? 'Grade manually' : REVIEWABLE.has(r.status) ? 'Review' : 'Details'}
                 </Link>
+                {r.status === 'PUBLISH_ERROR_MANUAL_REVIEW' && (
+                  <button
+                    disabled={publishing}
+                    onClick={() =>
+                      publish([r.id], `Check Canvas first. If ${r.student_name}'s grade is not there, send it again?`)
+                    }
+                  >
+                    Retry publish
+                  </button>
+                )}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      <button onClick={publish} disabled={publishing || selected.size === 0}>
+      <button
+        onClick={() =>
+          publish([...selected], `Publish ${selected.size} grade(s) to Canvas? A published grade cannot be published again.`)
+        }
+        disabled={publishing || selected.size === 0}
+      >
         Approve and publish selected ({selected.size})
       </button>
       {outcomes && (
@@ -139,7 +155,8 @@ export default function Dashboard() {
         </div>
       )}
       <p>
-        Data is deleted 48 hours after upload or after publish. This batch is deleted by{' '}
+        Data is deleted 48 hours after upload. Scores and feedback are removed as soon as a grade is published. This
+        batch is deleted by{' '}
         {new Date(batch.expires_at).toLocaleString()}.
       </p>
     </>

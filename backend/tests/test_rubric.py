@@ -7,7 +7,7 @@ from pypdf import PdfReader, PdfWriter
 
 from app.domain.pdf import PdfError, pdf_text
 from app.domain.rubric import RubricError, rubric_parser
-from tests.conftest import RUBRIC_TEXT, make_pdf
+from tests.conftest import RUBRIC_TEXT, make_google_docs_style_pdf, make_pdf
 
 
 def encrypted(pdf: bytes) -> bytes:
@@ -58,6 +58,15 @@ def test_missing_or_invalid_rubric_raises(text):
 def test_pdf_rubric_text_is_parsed():
     text = pdf_text(make_pdf(["Correctness: 10 points", "Style: 5"]))
     assert rubric_parser(text).max_score == Decimal(15)
+
+
+def test_a_pdf_drawn_word_by_word_keeps_its_lines():
+    lines = ["Correctness: 10 points", "Concepts: 6 [keywords: loop, recursion; 2 each]"]
+    text = pdf_text(make_google_docs_style_pdf(lines))
+    assert [line.split() for line in text.splitlines()] == [
+        ["Correctness:", "10", "points"], ["Concepts:", "6", "[keywords:", "loop,", "recursion;", "2", "each]"]]
+    rubric = rubric_parser(text)
+    assert (rubric.max_score, rubric.criteria[1].accepted_keywords) == (Decimal(16), ["loop", "recursion"])
 
 
 def test_pdf_without_text_or_not_a_pdf_raises():

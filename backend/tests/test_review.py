@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.domain.review import PredictionAcceptStatus, ReviewAction, ReviewError
+from app.domain.review import PredictionAcceptStatus, ReviewAction, ReviewError, criteria_total
 
 
 @pytest.fixture
@@ -49,13 +49,40 @@ def test_manual_grade_works_when_the_ai_failed():
     assert review.review_complete and review.validation_status is ReviewAction.PENDING
 
 
-@pytest.mark.parametrize("score,feedback", [
-    (Decimal(-1), "ok"),
-    (Decimal("21.5"), "ok"),
-    (Decimal(5), ""),
-    (Decimal(5), "   "),
-])
-def test_out_of_range_score_or_empty_feedback_is_rejected(review, score, feedback):
+@pytest.mark.parametrize("score", [Decimal(-1), Decimal("21.5")])
+def test_out_of_range_score_is_rejected(review, score):
     with pytest.raises(ReviewError):
-        review.edit_prediction(score, feedback)
+        review.edit_prediction(score, "ok")
     assert review.validation_status is ReviewAction.PENDING and not review.review_complete
+
+
+@pytest.mark.parametrize("feedback", [None, "", "   "])
+def test_a_grader_may_leave_the_feedback_empty(review, feedback):
+    review.edit_prediction(Decimal(5), feedback)
+    assert (review.final_score, review.final_feedback) == (Decimal(5), "")
+
+
+def test_undo_reject_restores_the_unreviewed_suggestion(review):
+    with pytest.raises(ReviewError):
+        review.undo_reject()
+    review.reject_prediction("wrong student")
+    review.manual_grade(Decimal(3), "x")
+    review.undo_reject()
+    assert (review.validation_status, review.final_score, review.comments) == (ReviewAction.PENDING, None, "")
+    review.accept_prediction()
+    assert review.final_score == Decimal("17.5")
+
+
+def test_criterion_scores_add_up_to_the_final_score(rubric):
+    assert criteria_total(rubric, {"c1": Decimal(8), "c2": Decimal("4.5"), "c3": Decimal(0)}) == Decimal("12.5")
+
+
+@pytest.mark.parametrize("points", [
+    {"c1": 8, "c2": 4},
+    {"c1": 8, "c2": 4, "c3": 2, "c4": 1},
+    {"c1": 11, "c2": 4, "c3": 2},
+    {"c1": 8, "c2": -1, "c3": 2},
+])
+def test_criterion_scores_must_cover_the_rubric_and_stay_in_range(rubric, points):
+    with pytest.raises(ReviewError):
+        criteria_total(rubric, {k: Decimal(v) for k, v in points.items()})

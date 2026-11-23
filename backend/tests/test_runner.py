@@ -188,13 +188,14 @@ async def test_rows_in_other_states_are_left_alone(sessions):
 
 async def test_a_successful_publish_purges_the_content(sessions):
     result_id = await add_result(sessions, status=Status.PUBLISHING, submission_text="answer", ai_output={},
-                                 suggested_feedback="ai", final_score=Decimal(19), final_feedback="Well done")
+                                 suggested_score=Decimal(18), suggested_feedback="ai", final_score=Decimal(19),
+                                 final_feedback="Well done")
     canvas = FakeCanvas()
     await Runner(sessions, canvas, FakeGrader(), 1)._publish(result_id)
     row = await load(sessions, result_id)
     assert row.status == Status.PUBLISHED and row.published_at is not None
     assert (row.submission_text, row.ai_output, row.suggested_feedback, row.final_feedback) == (None,) * 4
-    assert row.final_score == 19
+    assert (row.suggested_score, row.final_score) == (None, None)
     assert canvas.published == [{"course_id": "1001", "assignment_id": "2001", "student_id": "3001",
                                   "attempt": "1", "score": Decimal(19), "comment": "Well done"}]
     async with sessions() as session:

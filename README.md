@@ -72,7 +72,7 @@ Total: 21
 |---|---|---|---|
 | Ada Lovelace | online text | 19 | Normal flow; partial keyword credit |
 | Alan Turing | `.py` | 19 | Normal flow; the file is read as text, never run |
-| Grace Hopper | `.java` | 17 | Every publish fails: three tries, then "Publish failed: check Canvas" |
+| Grace Hopper | `.java` | 17 | Publishing fails three times per backend start: "Publish failed: check Canvas", then **Retry publish** works |
 | Edsger Dijkstra | `.pdf` | 21 | PDF text extraction; every keyword found |
 | Barbara Liskov | `.jpeg` | none | Rejected before any AI call: "unsupported file type" |
 | Donald Knuth | online text | none | Malformed AI output: "AI output invalid after 3 attempts" |
@@ -122,15 +122,15 @@ Test case numbers are from the Test Plan Document. Backend test files are in `ba
 | TC-003 AI output validation | `test_bedrock_val.py` | Margaret's over-maximum score is refused |
 | TC-004 Partial credit | `test_partial_credit.py` | Ada's 19 of 21 with the sample rubric |
 | TC-005 Accept, edit, reject | `test_review.py`; `test_grading_api.py`: `test_accepted_result_publishes_once`, `test_edit_keeps_the_ai_suggestion`, `test_rejected_result_can_be_graded_manually_and_published` | Each action on a **Review** page, final score on the dashboard |
-| TC-006 Duplicate publish | `test_publish.py`, `test_models.py`; `test_grading_api.py`: `test_the_same_submission_in_a_second_batch_is_not_published_again` | Publish Ada, start a new grading run, accept and publish Ada again: refused |
+| TC-006 Duplicate publish | `test_publish.py`, `test_models.py`; `test_grading_api.py`: `test_the_same_submission_in_a_second_batch_is_not_published_again` | Publish Ada, start a new grading run: Ada's row is marked as already sent and cannot be selected |
 | TC-007 Login and access | `test_auth.py` | The accounts above |
 | TC-008 Invalid AI output | `test_bedrock_val.py`; `test_runner.py`: `test_three_invalid_outputs_end_in_manual_review` | Donald ends in "Needs a manual grade" with no score |
 | TC-009 Unapproved publish | `test_publish.py`: `test_only_approved_results_can_be_published`; `test_grading_api.py`: `test_only_reviewed_results_of_the_batch_are_published` | Checkboxes stay disabled until a final score exists |
 | TC-010 End to end | `test_grading_api.py`: `test_rubric_to_published_end_to_end` | Sample rubric, edit Alan's score, publish, status "Published to Canvas" |
 
-Also covered: publish retries (`test_publish.py`, `test_runner.py`), the 48-hour purge (`test_retention.py`) and one
-grader's runs being hidden from another (`test_grading_api.py`). The frontend has no automated tests yet; browser
-checks are planned with Selenium.
+Also covered: publish retries (`test_publish.py`, `test_runner.py`, `test_status.py`, `test_grading_api.py`), the
+48-hour purge (`test_retention.py`) and one grader's runs being hidden from another (`test_grading_api.py`). The
+frontend has no automated tests yet; browser checks are planned with Selenium.
 
 Run the automated checks, with the database from step 1 running:
 
@@ -151,22 +151,27 @@ Alpha limits:
 
 - Canvas is a fake. "Canvas connected" always shows, there is no Canvas OAuth, and publishes are held in memory.
 - The app runs locally only; it is not deployed yet.
-- A failed publish has no retry button. Grace Hopper's row stays in "Publish failed: check Canvas" until the data expires.
-- A reload may ask for **Log in** again where the browser blocks third-party cookies.
 - The Vite build warns that the bundle is over 500 kB. It is only a warning.
 
 Current behaviour:
 
 - Rubrics must follow the format above; anything else gets an error naming the line.
 - Student code is read as text and never run.
-- The final grade is one total plus feedback. Per-criterion AI scores are shown read-only.
+- The grader sets a final score per criterion and the total is their sum. Feedback on an edited or manual grade is
+  optional.
+- **Undo reject** returns a rejected suggestion to unreviewed and drops a manual grade entered after the reject.
+- A student already sent to Canvas from another grading run, or waiting for a Canvas check there, is marked on the
+  dashboard and cannot be selected.
+- A published grade cannot be changed here; edit it in Canvas.
 - With real AI grading, a keyword criterion's rationale is the model's own reading and can disagree with the score,
   which always comes from keyword matching.
 - Scores are rounded to two decimal places.
-- Publishing clears the submission text and feedback. The row keeps its ids, student name and scores until the 48-hour
+- Publishing clears the submission text, feedback and scores. The row keeps its ids and student name until the 48-hour
   deletion, and there is no manual delete button.
+- **Retry publish** on a failed publish sends the grade again with three new tries.
 - Dashboard counts: **Approved** includes published rows; **Failed** includes rows that need a manual grade.
-- Audit records hold the action and ids, not the user who acted.
+- Audit records hold the action, ids and the Auth0 user id of the grader who acted. Automatic steps (publish result,
+  deletion) have no user.
 - Background work runs inside the backend process. After a restart, grading resumes, and a publish that was interrupted
   moves to "Publish failed: check Canvas" because Canvas may already have the grade.
 - Approving the same student from two grading runs at the same moment returns a 500 for one of them. Nothing is posted

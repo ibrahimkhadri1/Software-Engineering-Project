@@ -27,5 +27,11 @@ def test_manual_grade_paths_return_to_review():
     assert transition(Status.AI_ERROR_MANUAL_REVIEW, Status.AWAITING_REVIEW) is Status.AWAITING_REVIEW
 
 
+def test_a_failed_publish_can_be_retried():
+    assert transition(Status.PUBLISH_ERROR_MANUAL_REVIEW, Status.PUBLISHING) is Status.PUBLISHING
+    with pytest.raises(TransitionError):
+        transition(Status.PUBLISH_ERROR_MANUAL_REVIEW, Status.AWAITING_REVIEW)
+
+
 def test_every_status_has_a_transition_entry():
     assert set(TRANSITIONS) == set(Status)
