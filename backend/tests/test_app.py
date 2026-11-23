@@ -4,6 +4,7 @@ import logging
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.logging import JsonFormatter
 from app.main import create_app
@@ -86,3 +87,8 @@ def test_log_formatter_drops_unsafe_extra_fields():
     assert entry["path"] == "/healthz"
     assert "submission_text" not in entry
     assert "student answer" not in json.dumps(entry)
+
+
+@pytest.mark.parametrize("given", ["postgresql://u:p@db/x", "postgresql+asyncpg://u:p@db/x"])
+def test_a_plain_postgres_url_gets_the_async_driver(given):
+    assert Settings(database_url=given).database_url == "postgresql+asyncpg://u:p@db/x"
