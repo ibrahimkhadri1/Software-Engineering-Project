@@ -5,11 +5,13 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+import jwt
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api import canvas, grading
+from app.core.auth import User, current_user
 from app.core.config import get_settings
 from app.core.errors import error_response, register_error_handlers
 from app.core.logging import correlation_id, setup_logging
@@ -39,9 +41,10 @@ def create_app() -> FastAPI:
         await engine.dispose()
 
     app = FastAPI(title="Canvas Autograder API", lifespan=lifespan)
+    app.state.jwks = jwt.PyJWKClient(f"https://{settings.auth0_domain}/.well-known/jwks.json")
     register_error_handlers(app)
-    app.include_router(canvas.router)
-    app.include_router(grading.router)
+    app.include_router(canvas.router, dependencies=[Depends(current_user)])
+    app.include_router(grading.router, dependencies=[Depends(current_user)])
 
     @app.middleware("http")
     async def correlation_and_timing(request: Request, call_next):
@@ -75,6 +78,10 @@ def create_app() -> FastAPI:
     @app.get("/healthz")
     async def healthz():
         return {"status": "ok"}
+
+    @app.get("/api/me")
+    async def me(user: User):
+        return {"sub": user}
 
     return app
 

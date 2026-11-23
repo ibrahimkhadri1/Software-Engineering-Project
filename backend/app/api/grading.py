@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.auth import User
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.db.models import PUBLISH_CLAIMED, AuditEvent, GradingBatch, GradingResult
@@ -56,7 +57,7 @@ def _not_found() -> AppError:
 
 
 @router.post("/batches", status_code=202)
-async def create_batch(body: BatchIn, request: Request, session: Session):
+async def create_batch(body: BatchIn, request: Request, session: Session, user: User):
     canvas = request.app.state.canvas
     assignment = next((a for a in await canvas.assignments(body.course_id) if a.id == body.assignment_id), None)
     if assignment is None:
@@ -72,7 +73,7 @@ async def create_batch(body: BatchIn, request: Request, session: Session):
                        f"is worth {assignment.points_possible}.", 422)
 
     batch = GradingBatch(
-        course_id=body.course_id, assignment_id=body.assignment_id, assignment_name=assignment.name,
+        auth0_sub=user, course_id=body.course_id, assignment_id=body.assignment_id, assignment_name=assignment.name,
         rubric_text=rubric.raw_text,
         expires_at=datetime.now(UTC) + timedelta(hours=get_settings().data_ttl_hours),
     )
@@ -103,9 +104,9 @@ async def create_batch(body: BatchIn, request: Request, session: Session):
 
 
 @router.get("/batches/{batch_id}")
-async def get_batch(batch_id: uuid.UUID, session: Session):
+async def get_batch(batch_id: uuid.UUID, session: Session, user: User):
     batch = await session.get(GradingBatch, batch_id, options=[selectinload(GradingBatch.results)])
-    if batch is None:
+    if batch is None or batch.auth0_sub != user:
         raise _not_found()
     results = sorted(batch.results, key=lambda r: r.student_name)
     return {
@@ -120,17 +121,17 @@ async def get_batch(batch_id: uuid.UUID, session: Session):
     }
 
 
-async def _result(session: AsyncSession, result_id: uuid.UUID, lock: bool = False) -> GradingResult:
+async def _result(session: AsyncSession, result_id: uuid.UUID, user: str, lock: bool = False) -> GradingResult:
     result = await session.get(GradingResult, result_id, options=[selectinload(GradingResult.batch)],
                                with_for_update=lock)
-    if result is None:
+    if result is None or result.batch.auth0_sub != user:
         raise _not_found()
     return result
 
 
 @router.get("/results/{result_id}")
-async def get_result(result_id: uuid.UUID, session: Session):
-    r = await _result(session, result_id)
+async def get_result(result_id: uuid.UUID, session: Session, user: User):
+    r = await _result(session, result_id, user)
     rubric = rubric_parser(r.batch.rubric_text)
     return {
         "id": r.id, "batch_id": r.batch_id, "student_name": r.student_name, "attempt": r.attempt,
@@ -145,8 +146,8 @@ async def get_result(result_id: uuid.UUID, session: Session):
 
 
 @router.patch("/results/{result_id}/review")
-async def review_result(result_id: uuid.UUID, body: ReviewIn, session: Session):
-    r = await _result(session, result_id, lock=True)
+async def review_result(result_id: uuid.UUID, body: ReviewIn, session: Session, user: User):
+    r = await _result(session, result_id, user, lock=True)
     if r.status not in REVIEWABLE:
         raise AppError("INVALID_STATE", "This result can no longer be reviewed.", 409)
     review = PredictionAcceptStatus(
@@ -174,11 +175,14 @@ async def review_result(result_id: uuid.UUID, body: ReviewIn, session: Session):
     r.reviewed_at = datetime.now(UTC)
     session.add(AuditEvent(action=f"review_{body.action}", batch_id=r.batch_id, result_id=r.id))
     await session.commit()
-    return await get_result(result_id, session)
+    return await get_result(result_id, session, user)
 
 
 @router.post("/batches/{batch_id}/approve-and-publish")
-async def approve_and_publish(batch_id: uuid.UUID, body: PublishIn, request: Request, session: Session):
+async def approve_and_publish(batch_id: uuid.UUID, body: PublishIn, request: Request, session: Session, user: User):
+    batch = await session.get(GradingBatch, batch_id)
+    if batch is None or batch.auth0_sub != user:
+        raise _not_found()
     outcomes = []
     for result_id in body.result_ids:
         outcome = await _approve_and_claim(session, batch_id, result_id)

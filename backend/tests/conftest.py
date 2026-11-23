@@ -2,9 +2,13 @@ import asyncio
 import os
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
+import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -19,6 +23,21 @@ TEST_DB = make_url(get_settings().database_url).set(database="autograder_test")
 os.environ["DATABASE_URL"] = TEST_DB.render_as_string(hide_password=False)
 get_settings.cache_clear()
 TABLES = "grading_results, grading_batches, audit_events"
+
+GRADER = "auth0|grader"
+SIGNING_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+class FakeJwks:
+    def get_signing_key_from_jwt(self, token):
+        return SimpleNamespace(key=SIGNING_KEY.public_key())
+
+
+def token(sub=GRADER, permissions=("use:autograder",), key=SIGNING_KEY, **claims) -> str:
+    settings = get_settings()
+    now = int(time.time())
+    return jwt.encode({"sub": sub, "aud": settings.auth0_audience, "iss": f"https://{settings.auth0_domain}/",
+                       "iat": now, "exp": now + 600, "permissions": list(permissions)} | claims, key, "RS256")
 
 RUBRIC_TEXT = """
 Correctness: 10 points - Program produces the right output
@@ -88,14 +107,16 @@ async def sessions(database):
 @pytest.fixture
 def api(database):
     asyncio.run(_truncate())
-    with TestClient(create_app()) as client:
+    app = create_app()
+    app.state.jwks = FakeJwks()
+    with TestClient(app, headers={"Authorization": f"Bearer {token()}"}) as client:
         yield client
 
 
 async def add_result(sessions, expires_in=timedelta(hours=48), **fields):
     async with sessions() as session:
-        batch = GradingBatch(course_id="1001", assignment_id="2001", assignment_name="Lab 3", rubric_text=RUBRIC_TEXT,
-                             expires_at=datetime.now(UTC) + expires_in)
+        batch = GradingBatch(auth0_sub=GRADER, course_id="1001", assignment_id="2001", assignment_name="Lab 3",
+                             rubric_text=RUBRIC_TEXT, expires_at=datetime.now(UTC) + expires_in)
         result = GradingResult(**{"course_id": "1001", "assignment_id": "2001", "student_id": "3001",
                                   "student_name": "Ada Lovelace", "attempt": "1", "file_type": "online_text"} | fields)
         batch.results.append(result)

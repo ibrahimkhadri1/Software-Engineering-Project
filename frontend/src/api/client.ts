@@ -18,10 +18,29 @@ export class ApiError extends Error {
   }
 }
 
+let tokenSource: (() => Promise<string | undefined>) | undefined
+
+export function setTokenSource(source: () => Promise<string | undefined>) {
+  tokenSource = source
+}
+
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers)
+  if (tokenSource) {
+    try {
+      headers.set('Authorization', `Bearer ${await tokenSource()}`)
+    } catch {
+      throw new ApiError(401, {
+        code: 'AUTH_REQUIRED',
+        message: 'Your session is invalid or has expired. Sign in again.',
+        retryable: false,
+        correlation_id: '-',
+      })
+    }
+  }
   let response: Response
   try {
-    response = await fetch(`${API_BASE}${path}`, init)
+    response = await fetch(`${API_BASE}${path}`, { ...init, headers })
   } catch {
     throw new ApiError(0, {
       code: 'NETWORK_ERROR',
