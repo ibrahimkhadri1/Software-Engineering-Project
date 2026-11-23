@@ -1,0 +1,42 @@
+databases:
+  - name: canvas-autograder-db
+    plan: free
+    region: oregon
+    postgresMajorVersion: "16"
+    ipAllowList: []
+
+services:
+  - type: web
+    name: canvas-autograder-api
+    runtime: docker
+    plan: free
+    region: oregon
+    rootDir: backend
+    healthCheckPath: /healthz
+    envVars:
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: canvas-autograder-db
+          property: connectionString
+
+  - type: web
+    name: canvas-autograder
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_BASE_URL
+        sync: false
+      - key: VITE_AUTH0_DOMAIN
+        value: dev-g10vglwx2yb2sdn2.us.auth0.com
+      - key: VITE_AUTH0_CLIENT_ID
+        value: mPXt4OyvGtfuRxO2NBbaV68dJBCHz03m
+      - key: VITE_AUTH0_AUDIENCE
+        value: https://canvas-autograder-api
