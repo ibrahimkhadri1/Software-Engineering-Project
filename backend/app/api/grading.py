@@ -19,7 +19,7 @@ from app.db.session import Session
 from app.domain.pdf import PdfError, pdf_text
 from app.domain.publish import DuplicatePublishError, PublishAttempt, PublishError
 from app.domain.review import PredictionAcceptStatus, ReviewError, criteria_total
-from app.domain.rubric import RubricError, RubricStruct, rubric_parser
+from app.domain.rubric import RubricError, RubricStruct, join_wrapped_lines, rubric_parser
 from app.domain.status import Status, transition
 from app.domain.submission import SubmissionError, SubmissionStatus, extract_text
 
@@ -86,7 +86,7 @@ async def rubric_from_pdf(request: Request):
     if len(data) > RUBRIC_PDF_BYTES:
         raise AppError("RUBRIC_TOO_LARGE", "The rubric PDF must be 5 MB or smaller.", 413)
     try:
-        return {"rubric_text": pdf_text(data)}
+        return {"rubric_text": join_wrapped_lines(pdf_text(data))}
     except PdfError as e:
         raise AppError("RUBRIC_INVALID", f"The rubric PDF could not be read: {e}.", 422) from e
 
@@ -216,7 +216,8 @@ async def review_result(result_id: uuid.UUID, body: ReviewIn, session: Session, 
         raise AppError("REVIEW_INVALID", f"{str(e).capitalize()}.", 422) from e
     r.final_score, r.final_feedback = review.final_score, review.final_feedback
     r.review_comments, r.review_action = review.comments, review.validation_status
-    r.final_criteria = criterion_scores and {k: float(v) for k, v in criterion_scores.items()}
+    if body.action not in ("reject", "undo_reject"):
+        r.final_criteria = criterion_scores and {k: float(v) for k, v in criterion_scores.items()}
     r.reviewed_at = datetime.now(UTC)
     session.add(AuditEvent(action=f"review_{body.action}", auth0_sub=user, batch_id=r.batch_id, result_id=r.id))
     await session.commit()

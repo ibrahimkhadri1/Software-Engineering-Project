@@ -51,16 +51,14 @@ class PredictionAcceptStatus:
 
     def reject_prediction(self, comments: str = "") -> None:
         self._require_prediction()
-        self.final_score = self.final_feedback = None
         self.comments = comments
         self.validation_status = ReviewAction.REJECTED
 
     def undo_reject(self) -> None:
         if self.validation_status != ReviewAction.REJECTED:
             raise ReviewError("only a rejected suggestion can be restored")
-        self.final_score = self.final_feedback = None
         self.comments = ""
-        self.validation_status = ReviewAction.PENDING
+        self.validation_status = ReviewAction.PENDING if self.final_score is None else ReviewAction.EDITED
 
     def manual_grade(self, score: Decimal, feedback: str | None) -> None:
         if self.validation_status != ReviewAction.REJECTED and self.actual_score is not None:

@@ -96,6 +96,15 @@ def test_a_pdf_rubric_comes_back_as_editable_text(api):
     assert api.post("/api/grading/rubric/preview", json=r.json()).json()["max_score"] == 21
 
 
+def test_a_pdf_criterion_that_wraps_onto_a_second_line_is_one_criterion(api):
+    """Beta bug 004."""
+    lines = ["Correctness: 10 points The program produces the right output", "for every test case", "Style: 11"]
+    r = api.post("/api/grading/rubric/pdf", content=make_pdf(lines))
+    preview = api.post("/api/grading/rubric/preview", json=r.json()).json()
+    assert preview["max_score"] == 21
+    assert preview["criteria"][0]["description"] == "The program produces the right output for every test case"
+
+
 @pytest.mark.parametrize("data, status_code, code", [
     (b"not a pdf", 422, "RUBRIC_INVALID"),
     (b"%PDF" + b"0" * RUBRIC_PDF_BYTES, 413, "RUBRIC_TOO_LARGE"),
@@ -179,6 +188,7 @@ def test_only_reviewed_results_of_the_batch_are_published(api):
     batch = start_batch(api)
     alan, ada = result_id(batch, "Alan Turing"), result_id(batch, "Ada Lovelace")
     donald = result_id(batch, "Donald Knuth")
+    review(api, ada, action="accept")
     review(api, ada, action="reject")
     unknown = str(uuid.uuid4())
     outcomes = publish(api, batch, alan, ada, donald, unknown)
@@ -254,6 +264,19 @@ def test_a_reject_can_be_undone(api):
     assert (restored["status"], restored["review_action"], restored["final_score"]) == (
         "AWAITING_REVIEW", "pending", None)
     assert review(api, alan, action="accept").json()["final_score"] == 19
+
+
+def test_undo_reject_brings_back_the_saved_edit(api):
+    """Beta bug 005."""
+    batch = start_batch(api)
+    alan = result_id(batch, "Alan Turing")
+    review(api, alan, action="edit", criterion_scores={"c1": 9.5, "c2": 5, "c3": 2}, feedback="Nearly there")
+    review(api, alan, action="reject")
+    restored = review(api, alan, action="undo_reject").json()
+    assert (restored["status"], restored["review_action"], restored["final_score"], restored["final_feedback"],
+            restored["final_criteria"]) == ("AWAITING_REVIEW", "edited", 16.5, "Nearly there",
+                                            {"c1": 9.5, "c2": 5, "c3": 2})
+    assert publish(api, batch, alan)[0]["ok"]
 
 
 def test_canvas_failure_publish_ends_in_manual_review_until_retried(api, monkeypatch):
