@@ -26,14 +26,14 @@ def test_edit_keeps_the_original(review):
     assert review.review_complete
 
 
-def test_reject_clears_the_final_grade_until_a_manual_one(review):
-    review.accept_prediction()
+def test_reject_keeps_the_saved_grade_until_a_manual_one(review):
+    review.edit_prediction(Decimal(20), "Edited.")
     review.reject_prediction("Plagiarism suspected")
     assert review.validation_status is ReviewAction.REJECTED
-    assert review.final_score is None and not review.review_complete
+    assert (review.final_score, review.final_feedback) == (Decimal(20), "Edited.")
     assert review.comments == "Plagiarism suspected"
     review.manual_grade(Decimal(0), "See me.")
-    assert review.review_complete and review.validation_status is ReviewAction.REJECTED
+    assert review.final_score == 0 and review.validation_status is ReviewAction.REJECTED
 
 
 def test_manual_grade_needs_a_reject_first_when_there_is_a_suggestion(review):
@@ -66,11 +66,19 @@ def test_undo_reject_restores_the_unreviewed_suggestion(review):
     with pytest.raises(ReviewError):
         review.undo_reject()
     review.reject_prediction("wrong student")
-    review.manual_grade(Decimal(3), "x")
     review.undo_reject()
     assert (review.validation_status, review.final_score, review.comments) == (ReviewAction.PENDING, None, "")
     review.accept_prediction()
     assert review.final_score == Decimal("17.5")
+
+
+def test_undo_reject_restores_the_saved_grade(review):
+    """Beta bug 005."""
+    review.edit_prediction(Decimal(20), "Edited.")
+    review.reject_prediction("wrong student")
+    review.undo_reject()
+    assert (review.validation_status, review.final_score, review.final_feedback) == (
+        ReviewAction.EDITED, Decimal(20), "Edited.")
 
 
 def test_criterion_scores_add_up_to_the_final_score(rubric):

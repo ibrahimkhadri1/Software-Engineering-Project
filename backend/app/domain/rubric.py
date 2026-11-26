@@ -28,6 +28,17 @@ _POINTS = re.compile(r"^\s*(\d+(?:\.\d+)?)(?:\s*(?:pts?|points?))?\b", re.I)
 _KEYWORDS = re.compile(r"\[\s*keywords?\s*:\s*([^\];]*?)\s*(?:;\s*(\d+(?:\.\d+)?)\s*each\s*)?\]", re.I)
 
 
+def join_wrapped_lines(text: str) -> str:
+    lines: list[str] = []
+    for line in text.splitlines():
+        title, sep, rest = line.partition(":")
+        if lines and line.strip() and not (sep and title.strip() and _POINTS.match(rest)):
+            lines[-1] = f"{lines[-1].rstrip()} {line.strip()}"
+        else:
+            lines.append(line)
+    return "\n".join(lines)
+
+
 def rubric_parser(text: str) -> RubricStruct:
     """One criterion per line: ``Title: <points> [keywords: a, b; <n> each] description``.
     An optional ``Total: <points>`` line must match the sum of the criteria."""

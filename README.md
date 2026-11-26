@@ -8,7 +8,7 @@ and staff review, edit or reject every suggestion. Only approved grades are publ
 - **Backend:** FastAPI + SQLAlchemy + PostgreSQL (`backend/`)
 - **Services:** Auth0 (sign-in), Canvas REST API, Amazon Bedrock (Claude Sonnet 4.5)
 
-**Current build (alpha):** sign-in uses the real Auth0 tenant and Canvas is a fake built into the backend, so no Canvas
+**Current build (beta):** sign-in uses the real Auth0 tenant and Canvas is a fake built into the backend, so no Canvas
 account is needed and no real grades are posted. The AI grader is a fake by default, so no AWS account is needed and
 the scores are not real AI output. [Real AI grading](#real-ai-grading) turns on Amazon Bedrock.
 
@@ -51,7 +51,7 @@ Logins are shared privately by the developer. Sign-in requires a verified `@sjsu
 |---|---|
 | `@sjsu.edu` with the Grader role | Reaches Rubric setup |
 | `@sjsu.edu` without the role (the student case) | "Your account does not have grader access." |
-| Any other email | Auth0 refuses the login |
+| Any other email | Auth0 refuses the login; **Log in with another account** opens the Auth0 sign-in page again |
 
 ## Test data
 
@@ -79,8 +79,9 @@ Total: 21
 | Margaret Hamilton | `.txt` | none | AI score over the maximum: "AI output invalid after 3 attempts" |
 
 Rubric format: one criterion per line, `Title: <points> [keywords: a, b, c; <n> each] <description>`. The keyword part
-and the description are optional, and so is a final `Total: <points>` line. The fake grader gives full points on
-criteria without keywords. Criteria with keywords are always scored by keyword matching, with either grader.
+and the description are optional, and so is a final `Total: <points>` line. In a PDF rubric, a criterion that wraps
+onto the next line is joined back into one line. The fake grader gives full points on criteria without keywords.
+Criteria with keywords are always scored by keyword matching, with either grader.
 
 **Starting over:** a student's grade can only be published once, across all grading runs, until the data expires. To
 publish the same students again, stop the backend, wipe the local database and recreate its tables, then start the
@@ -147,10 +148,11 @@ CI runs the backend and frontend checks on every pull request.
 
 ## Known issues
 
-Alpha limits:
+Beta limits:
 
 - Canvas is a fake. "Canvas connected" always shows, there is no Canvas OAuth, and publishes are held in memory.
-- The app runs locally only; it is not deployed yet.
+- The deployed site is https://canvas-autograder-0xov.onrender.com. Its free server sleeps after about 15 minutes
+  without use, and the first request after that can take up to a minute.
 - The Vite build warns that the bundle is over 500 kB. It is only a warning.
 
 Current behaviour:
@@ -159,7 +161,8 @@ Current behaviour:
 - Student code is read as text and never run.
 - The grader sets a final score per criterion and the total is their sum. Feedback on an edited or manual grade is
   optional.
-- **Undo reject** returns a rejected suggestion to unreviewed and drops a manual grade entered after the reject.
+- **Undo reject** keeps the grade saved before the reject, or a manual grade entered after it. With no grade saved,
+  the suggestion returns to unreviewed.
 - A student already sent to Canvas from another grading run, or waiting for a Canvas check there, is marked on the
   dashboard and cannot be selected.
 - A published grade cannot be changed here; edit it in Canvas.

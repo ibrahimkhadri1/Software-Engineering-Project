@@ -37,7 +37,10 @@ function SignInGate() {
       <Screen>
         <p>Review AI-suggested scores and feedback for Canvas submissions, then publish the grades you approve.</p>
         {error && <p role="alert">{error.message}</p>}
-        <button onClick={() => loginWithRedirect(returnHere())}>Log in</button>
+        {/* Auth0 keeps its session after an Action refuses a login; prompt=login asks for an account again. */}
+        <button onClick={() => loginWithRedirect({ ...returnHere(), authorizationParams: error ? { prompt: 'login' } : undefined })}>
+          {error ? 'Log in with another account' : 'Log in'}
+        </button>
       </Screen>
     )
   }

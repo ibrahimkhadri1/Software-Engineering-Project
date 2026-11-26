@@ -49,7 +49,6 @@ export default function Review() {
       feedback !== result!.suggested_feedback ||
       criteria.some((c) => Number(points[c.criterion_id]) !== ai.get(c.criterion_id)?.awarded_points)
     if (action === 'accept' && edited && !confirm('Replace your edited scores and feedback with the AI suggestion?')) return
-    if (action === 'undo_reject' && result!.final_score !== null && !confirm('Remove the manual grade you saved?')) return
     const graded = action === 'edit' || action === 'manual'
     if (graded) {
       const bad = criteria.find((c) => {
